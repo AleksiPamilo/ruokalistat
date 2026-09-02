@@ -191,10 +191,25 @@ async function handleMenu(): Promise<Response> {
   });
 }
 
+function isSameOriginRequest(request: Request, workerOrigin: string): boolean {
+  const secFetchSite = request.headers.get("Sec-Fetch-Site");
+  if (secFetchSite) {
+    return secFetchSite === "same-origin" || secFetchSite === "none";
+  }
+  const origin = request.headers.get("Origin");
+  if (origin) {
+    return origin === workerOrigin;
+  }
+  return true;
+}
+
 export default {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === "/api/menu") {
+      if (!isSameOriginRequest(request, url.origin)) {
+        return new Response("Forbidden", { status: 403 });
+      }
       return handleMenu();
     }
     return new Response("Not found", { status: 404 });
