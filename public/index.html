@@ -49,15 +49,9 @@
   <script>
     let latestData = null;
     let viewMode = 'today';
-    let showPastDays = false;
     try {
       viewMode = localStorage.getItem('lunch-view-mode') || 'today';
     } catch {}
-
-    function togglePastDays() {
-      showPastDays = !showPastDays;
-      if (latestData) render(latestData);
-    }
 
     function setViewMode(mode) {
       viewMode = mode;
@@ -118,21 +112,15 @@
 
     function render(data) {
       updateToggleUI();
-      const weekDates = isoWeekDates(data.date);
-      const hasPastDays = weekDates.some(d => d < data.date);
       const dates = viewMode === 'today'
         ? [data.date]
-        : (showPastDays ? weekDates : weekDates.filter(d => d >= data.date));
+        : isoWeekDates(data.date).filter(d => d >= data.date);
 
       document.getElementById('date-label').textContent = viewMode === 'today'
         ? `${weekdayLabel(data.date)} ${shortDateLabel(data.date)}`
-        : `${shortDateLabel(weekDates[0])}–${shortDateLabel(weekDates[6])}`;
+        : `${shortDateLabel(dates[0])}–${shortDateLabel(dates[dates.length - 1])}`;
 
-      const pastDaysToggle = viewMode === 'week' && hasPastDays
-        ? `<button onclick="togglePastDays()" class="text-xs text-blue-500 hover:underline mb-1">${showPastDays ? 'Piilota menneet päivät' : 'Näytä menneet päivät'}</button>`
-        : '';
-
-      document.getElementById('container').innerHTML = pastDaysToggle + dates
+      document.getElementById('container').innerHTML = dates
         .map(date => renderDaySection(date, data.restaurants, date === data.date))
         .join('');
     }
