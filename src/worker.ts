@@ -1,4 +1,4 @@
-import type { DayMenu, MenuApiResponse, RestaurantMenu } from "../../types";
+import type { DayMenu, MenuApiResponse, RestaurantMenu } from "../types";
 
 interface Env {}
 
@@ -68,7 +68,7 @@ function weekdayLabel(d: Date): string {
   return d.toLocaleDateString("fi-FI", { weekday: "long", timeZone: "UTC" });
 }
 
-export const onRequestGet: PagesFunction<Env> = async () => {
+async function handleMenu(): Promise<Response> {
   const now = new Date();
   const helsinkiDateStr = now.toLocaleDateString("en-CA", { timeZone: "Europe/Helsinki" });
   const today = parseISODate(helsinkiDateStr);
@@ -189,4 +189,14 @@ export const onRequestGet: PagesFunction<Env> = async () => {
       "Cache-Control": "public, max-age=1800, s-maxage=1800"
     }
   });
-};
+}
+
+export default {
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    if (url.pathname === "/api/menu") {
+      return handleMenu();
+    }
+    return new Response("Not found", { status: 404 });
+  }
+} satisfies ExportedHandler<Env>;
