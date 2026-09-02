@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="fi" class="h-full bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lounaslista</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-full p-4 md:p-8 flex flex-col items-center">
+  <header class="w-full max-w-4xl mb-6 flex flex-wrap justify-between items-baseline gap-3 border-b border-zinc-200 dark:border-zinc-800 pb-4">
+    <div>
+      <h1 class="text-2xl font-bold tracking-tight">Lounas</h1>
+      <p id="date-label" class="text-sm text-zinc-500 dark:text-zinc-400 mt-0.5">Ladataan...</p>
+    </div>
+    <div class="flex items-center gap-2">
+      <div class="flex text-xs font-medium rounded-md bg-zinc-200 dark:bg-zinc-800 p-0.5">
+        <button id="btn-today" onclick="setViewMode('today')" class="px-3 py-1 rounded transition">Tänään</button>
+        <button id="btn-week" onclick="setViewMode('week')" class="px-3 py-1 rounded transition">Viikko</button>
+      </div>
+      <button onclick="fetchMenus()" class="text-xs font-medium px-3 py-1.5 rounded-md bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 transition">
+        Päivitä
+      </button>
+    </div>
+  </header>
+
+  <main id="container" class="w-full max-w-4xl space-y-4">
+    <div class="animate-pulse bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-6 h-48"></div>
+    <div class="animate-pulse bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-6 h-48"></div>
+  </main>
+
+  <script>
+    let latestData = null;
+    let viewMode = 'today';
+    let showPastDays = false;
+    try {
+      viewMode = localStorage.getItem('lunch-view-mode') || 'today';
+    } catch {}
+
+    function togglePastDays() {
+      showPastDays = !showPastDays;
+      if (latestData) render(latestData);
+    }
+
+    function setViewMode(mode) {
+      viewMode = mode;
+      try {
+        localStorage.setItem('lunch-view-mode', mode);
+      } catch {}
+      updateToggleUI();
+      if (latestData) render(latestData);
+    }
+
+    function updateToggleUI() {
+      const activeClass = 'bg-white dark:bg-zinc-950 shadow-sm';
+      const inactiveClass = 'text-zinc-500 dark:text-zinc-400';
+      document.getElementById('btn-today').className = `px-3 py-1 rounded transition ${viewMode === 'today' ? activeClass : inactiveClass}`;
+      document.getElementById('btn-week').className = `px-3 py-1 rounded transition ${viewMode === 'week' ? activeClass : inactiveClass}`;
+    }
+
+    async function fetchMenus() {
+      const container = document.getElementById('container');
+      try {
+        const res = await fetch('/api/menu');
+        const data = await res.json();
+        latestData = data;
+        render(data);
+      } catch (err) {
+        container.innerHTML = `<p class="text-rose-500">Tietojen haku epäonnistui: ${escapeHtml(err.message)}</p>`;
+      }
+    }
+
+    function escapeHtml(str) {
+      const div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    }
+
+    function isoWeekDates(anchorIso) {
+      const anchor = new Date(anchorIso + 'T00:00:00Z');
+      const dow = (anchor.getUTCDay() + 6) % 7;
+      const monday = new Date(anchor);
+      monday.setUTCDate(anchor.getUTCDate() - dow);
+      const dates = [];
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(monday);
+        d.setUTCDate(monday.getUTCDate() + i);
+        dates.push(d.toISOString().slice(0, 10));
+      }
+      return dates;
+    }
+
+    function weekdayLabel(iso) {
+      return new Date(iso + 'T00:00:00Z').toLocaleDateString('fi-FI', { weekday: 'long', timeZone: 'UTC' });
+    }
+
+    function shortDateLabel(iso) {
+      const d = new Date(iso + 'T00:00:00Z');
+      return `${d.getUTCDate()}.${d.getUTCMonth() + 1}.`;
+    }
+
+    function render(data) {
+      updateToggleUI();
+      const weekDates = isoWeekDates(data.date);
+      const hasPastDays = weekDates.some(d => d < data.date);
+      const dates = viewMode === 'today'
+        ? [data.date]
+        : (showPastDays ? weekDates : weekDates.filter(d => d >= data.date));
+
+      document.getElementById('date-label').textContent = viewMode === 'today'
+        ? `${weekdayLabel(data.date)} ${shortDateLabel(data.date)}`
+        : `${shortDateLabel(weekDates[0])}–${shortDateLabel(weekDates[6])}`;
+
+      const pastDaysToggle = viewMode === 'week' && hasPastDays
+        ? `<button onclick="togglePastDays()" class="text-xs text-blue-500 hover:underline mb-1">${showPastDays ? 'Piilota menneet päivät' : 'Näytä menneet päivät'}</button>`
+        : '';
+
+      document.getElementById('container').innerHTML = pastDaysToggle + dates
+        .map(date => renderDaySection(date, data.restaurants, date === data.date))
+        .join('');
+    }
+
+    function renderDaySection(date, restaurants, isToday) {
+      return `
+        <section>
+          <div class="flex items-baseline gap-2 mb-2 px-1">
+            <h2 class="text-sm font-bold capitalize ${isToday ? 'text-blue-600 dark:text-blue-400' : 'text-zinc-500 dark:text-zinc-400'}">${escapeHtml(weekdayLabel(date))}</h2>
+            <span class="text-xs text-zinc-400">${escapeHtml(shortDateLabel(date))}</span>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-2">
+            ${restaurants.map(r => renderRestaurantDay(r, date)).join('')}
+          </div>
+        </section>
+      `;
+    }
+
+    function renderRestaurantDay(r, date) {
+      const day = r.days.find(d => d.date === date);
+      return `
+        <div class="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4 shadow-sm">
+          <div class="flex justify-between items-center mb-3">
+            <h3 class="text-sm font-semibold">${escapeHtml(r.name)}</h3>
+            <a href="${r.sourceUrl}" target="_blank" rel="noopener" class="text-[11px] text-blue-500 hover:underline">Alkuperäinen</a>
+          </div>
+          ${!day || !day.categories.length
+            ? `<p class="text-sm text-zinc-400 italic">${escapeHtml(!r.isOpen && r.message ? r.message : 'Ei lounasta tänä päivänä.')}</p>`
+            : `<div class="space-y-3">${day.categories.map(renderCategory).join('')}</div>`}
+        </div>
+      `;
+    }
+
+    function renderCategory(c) {
+      return `
+        <div>
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-xs font-bold uppercase tracking-wider text-zinc-500">${escapeHtml(c.title)}</span>
+            ${(c.diets || []).map(d => `<span class="text-[10px] font-semibold bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 rounded text-zinc-600 dark:text-zinc-300">${escapeHtml(d)}</span>`).join('')}
+          </div>
+          <ul class="text-sm space-y-1">
+            ${c.items.map(item => `
+              <li class="flex justify-between items-start gap-2">
+                <span>${escapeHtml(item.name)}</span>
+                ${item.diets?.length ? `<span class="text-[10px] text-zinc-400 shrink-0 mt-0.5">${escapeHtml(item.diets.join(', '))}</span>` : ''}
+              </li>
+            `).join('')}
+          </ul>
+        </div>
+      `;
+    }
+
+    updateToggleUI();
+    fetchMenus();
+  </script>
+</body>
+</html>
