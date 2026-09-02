@@ -2,6 +2,20 @@ import type { DayMenu, MenuApiResponse, RestaurantMenu } from "../types";
 
 interface Env {}
 
+interface CompassSetMenu {
+  Name: string;
+  Components: string[];
+}
+interface CompassDay {
+  Date: string;
+  SetMenus: CompassSetMenu[];
+}
+interface CompassResponse {
+  RestaurantName?: string;
+  RestaurantUrl?: string;
+  MenusForDays: CompassDay[];
+}
+
 interface JamixMenuItem {
   name: string;
   orderNumber: number;
@@ -50,61 +64,25 @@ function weekdayLabel(d: Date): string {
   return d.toLocaleDateString("fi-FI", { weekday: "long", timeZone: "UTC" });
 }
 
-function decodeXmlEntities(s: string): string {
-  return s
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&#39;/g, "'")
-    .replace(/&amp;/g, "&");
-}
-
-function parseCompassRss(xml: string): DayMenu[] {
-  const days: DayMenu[] = [];
-  const itemRegex = /<item>([\s\S]*?)<\/item>/g;
-  let itemMatch: RegExpExecArray | null;
-
-  while ((itemMatch = itemRegex.exec(xml))) {
-    const itemXml = itemMatch[1];
-    const titleMatch = /<title>([\s\S]*?)<\/title>/.exec(itemXml);
-    const descMatch = /<description>([\s\S]*?)<\/description>/.exec(itemXml);
-    if (!titleMatch || !descMatch) continue;
-
-    const title = decodeXmlEntities(titleMatch[1].trim());
-    const dateMatch = /(\d{2})-(\d{2})-(\d{4})/.exec(title);
-    if (!dateMatch) continue;
-    const [, dd, mm, yyyy] = dateMatch;
-    const date = new Date(Date.UTC(parseInt(yyyy, 10), parseInt(mm, 10) - 1, parseInt(dd, 10)));
-
-    const description = decodeXmlEntities(descMatch[1]);
-    const blocks = description.split("<br>");
-    const categories = [];
-
-    for (const block of blocks) {
-      const trimmed = block.trim();
-      if (!trimmed) continue;
-      const newlineIdx = trimmed.indexOf("\n");
-      const categoryTitle = (newlineIdx === -1 ? trimmed : trimmed.slice(0, newlineIdx)).replace(/:$/, "").trim();
-      const itemsText = newlineIdx === -1 ? "" : trimmed.slice(newlineIdx + 1);
-
-      const items = [];
-      const itemPattern = /([^()]+)\(([^()]*)\)/g;
-      let m: RegExpExecArray | null;
-      while ((m = itemPattern.exec(itemsText))) {
-        const name = m[1].replace(/\s+/g, " ").trim();
-        const diets = m[2].split(",").map(s => s.trim()).filter(Boolean);
-        if (name) items.push({ name, diets });
-      }
-      if (items.length > 0) categories.push({ title: categoryTitle, items });
-    }
-
-    if (categories.length > 0) {
-      days.push({ date: toISODate(date), weekday: weekdayLabel(date), categories });
-    }
-  }
-
-  return days;
+function parseCompassJson(data: CompassResponse): DayMenu[] {
+  return (data.MenusForDays || [])
+    .map(d => {
+      const date = parseISODate(d.Date.slice(0, 10));
+      const categories = (d.SetMenus || [])
+        .map(set => ({
+          title: set.Name,
+          items: (set.Components || []).map(c => {
+            const match = c.match(/^(.*?)(?:\s*\((.*?)\))?$/);
+            return {
+              name: match ? match[1].trim() : c,
+              diets: match && match[2] ? match[2].split(",").map(s => s.trim()) : []
+            };
+          })
+        }))
+        .filter(c => c.items.length > 0);
+      return { date: toISODate(date), weekday: weekdayLabel(date), categories };
+    })
+    .filter(d => d.categories.length > 0);
 }
 
 async function handleMenu(): Promise<Response> {
@@ -118,7 +96,7 @@ async function handleMenu(): Promise<Response> {
   const weekEndInt = toYYYYMMDD(weekEnd);
 
   const JAMIX_URL = "https://fi.jamix.cloud/apps/menuservice/rest/haku/menu/93077/79?lang=fi";
-  const COMPASS_URL = "https://www.compass-group.fi/menuapi/feed/rss/current-week?costNumber=0083&language=fi";
+  const COMPASS_URL = "https://www.compass-group.fi/menuapi/feed/json?costNumber=0083&language=fi";
 
   const [jamixRes, compassRes] = await Promise.allSettled([
     fetch(JAMIX_URL),
@@ -184,8 +162,11 @@ async function handleMenu(): Promise<Response> {
 
   if (compassRes.status === "fulfilled" && compassRes.value.ok) {
     try {
-      const xml = await compassRes.value.text();
-      const mappedDays = parseCompassRss(xml).filter(d => d.date >= helsinkiDateStr && d.date <= toISODate(weekEnd));
+      const data = (await compassRes.value.json()) as CompassResponse;
+      if (data.RestaurantName) compassMenu.name = data.RestaurantName;
+      if (data.RestaurantUrl) compassMenu.sourceUrl = data.RestaurantUrl;
+
+      const mappedDays = parseCompassJson(data).filter(d => d.date >= helsinkiDateStr && d.date <= toISODate(weekEnd));
 
       if (mappedDays.length > 0) {
         compassMenu.isOpen = true;
