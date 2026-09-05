@@ -2,18 +2,21 @@ import type { DayMenu, MenuApiResponse, RestaurantMenu } from "../types";
 
 interface Env {}
 
-interface CompassSetMenu {
-  Name: string;
-  Components: string[];
+interface CompassMeal {
+  name: string;
+  diets?: string[];
 }
-interface CompassDay {
-  Date: string;
-  SetMenus: CompassSetMenu[];
+interface CompassMenuPackage {
+  name: string;
+  meals: CompassMeal[];
 }
-interface CompassResponse {
-  RestaurantName?: string;
-  RestaurantUrl?: string;
-  MenusForDays: CompassDay[];
+interface CompassWeekDay {
+  date: string;
+  menuPackages: CompassMenuPackage[];
+}
+interface CompassWeekResponse {
+  weekNumber: number;
+  menus: CompassWeekDay[];
 }
 
 interface JamixMenuItem {
@@ -64,20 +67,17 @@ function weekdayLabel(d: Date): string {
   return d.toLocaleDateString("fi-FI", { weekday: "long", timeZone: "UTC" });
 }
 
-function parseCompassJson(data: CompassResponse): DayMenu[] {
-  return (data.MenusForDays || [])
+function parseCompassWeek(data: CompassWeekResponse): DayMenu[] {
+  return (data.menus || [])
     .map(d => {
-      const date = parseISODate(d.Date.slice(0, 10));
-      const categories = (d.SetMenus || [])
-        .map(set => ({
-          title: set.Name,
-          items: (set.Components || []).map(c => {
-            const match = c.match(/^(.*?)(?:\s*\((.*?)\))?$/);
-            return {
-              name: match ? match[1].trim() : c,
-              diets: match && match[2] ? match[2].split(",").map(s => s.trim()) : []
-            };
-          })
+      const date = parseISODate(d.date.slice(0, 10));
+      const categories = (d.menuPackages || [])
+        .map(pkg => ({
+          title: pkg.name,
+          items: (pkg.meals || []).map(meal => ({
+            name: meal.name.trim(),
+            diets: meal.diets || []
+          }))
         }))
         .filter(c => c.items.length > 0);
       return { date: toISODate(date), weekday: weekdayLabel(date), categories };
@@ -90,17 +90,18 @@ async function handleMenu(): Promise<Response> {
   const helsinkiDateStr = now.toLocaleDateString("en-CA", { timeZone: "Europe/Helsinki" });
   const today = parseISODate(helsinkiDateStr);
 
-  const isoDow = (today.getUTCDay() + 6) % 7; // Monday=0 ... Sunday=6
-  const weekEnd = addDays(today, 6 - isoDow);
   const todayInt = toYYYYMMDD(today);
-  const weekEndInt = toYYYYMMDD(weekEnd);
+  const isoDow = (today.getUTCDay() + 6) % 7; // Monday=0 ... Sunday=6
+  const thisWeekMonday = addDays(today, -isoDow);
 
   const JAMIX_URL = "https://fi.jamix.cloud/apps/menuservice/rest/haku/menu/93077/79?lang=fi";
-  const COMPASS_URL = "https://www.compass-group.fi/menuapi/feed/json?costNumber=0083&language=fi";
+  const compassWeekUrl = (d: Date) =>
+    `https://www.compass-group.fi/menuapi/week-menus?costCenter=0083&date=${toISODate(d)}&language=fi`;
 
-  const [jamixRes, compassRes] = await Promise.allSettled([
+  const [jamixRes, compassThisWeekRes, compassNextWeekRes] = await Promise.allSettled([
     fetch(JAMIX_URL),
-    fetch(COMPASS_URL)
+    fetch(compassWeekUrl(thisWeekMonday)),
+    fetch(compassWeekUrl(addDays(thisWeekMonday, 7)))
   ]);
 
   let jamixMenu: RestaurantMenu = {
@@ -115,7 +116,7 @@ async function handleMenu(): Promise<Response> {
     try {
       const data = (await jamixRes.value.json()) as JamixKitchen[];
       const days = data[0]?.menuTypes[0]?.menus[0]?.days || [];
-      const weekDays = days.filter(d => d.date >= todayInt && d.date <= weekEndInt);
+      const weekDays = days.filter(d => d.date >= todayInt);
 
       const mappedDays: DayMenu[] = weekDays
         .map(d => {
@@ -160,13 +161,22 @@ async function handleMenu(): Promise<Response> {
     days: []
   };
 
-  if (compassRes.status === "fulfilled" && compassRes.value.ok) {
-    try {
-      const data = (await compassRes.value.json()) as CompassResponse;
-      if (data.RestaurantName) compassMenu.name = data.RestaurantName;
-      if (data.RestaurantUrl) compassMenu.sourceUrl = data.RestaurantUrl;
+  const compassResponses = [compassThisWeekRes, compassNextWeekRes].filter(
+    (r): r is PromiseFulfilledResult<Response> => r.status === "fulfilled" && r.value.ok
+  );
 
-      const mappedDays = parseCompassJson(data).filter(d => d.date >= helsinkiDateStr && d.date <= toISODate(weekEnd));
+  if (compassResponses.length > 0) {
+    try {
+      const weeks = await Promise.all(compassResponses.map(r => r.value.json() as Promise<CompassWeekResponse>));
+      const byDate = new Map<string, DayMenu>();
+      for (const week of weeks) {
+        for (const day of parseCompassWeek(week)) {
+          byDate.set(day.date, day);
+        }
+      }
+      const mappedDays = [...byDate.values()]
+        .filter(d => d.date >= helsinkiDateStr)
+        .sort((a, b) => a.date.localeCompare(b.date));
 
       if (mappedDays.length > 0) {
         compassMenu.isOpen = true;
