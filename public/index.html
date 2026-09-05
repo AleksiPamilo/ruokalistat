@@ -38,15 +38,29 @@
       <p id="date-label" class="text-sm text-zinc-500 dark:text-zinc-400 mt-0.5">Ladataan...</p>
     </div>
     <div class="flex items-center gap-2">
+      <div id="week-nav" class="hidden items-center gap-1">
+        <button id="btn-prev-week" onclick="shiftWeek(-1)" aria-label="Edellinen viikko" class="w-7 h-7 flex items-center justify-center rounded-md bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 transition disabled:opacity-30 disabled:pointer-events-none">
+          <svg viewBox="0 0 20 20" fill="currentColor" class="w-4 h-4"><path fill-rule="evenodd" d="M12.79 5.23a.75.75 0 010 1.06L9.06 10l3.73 3.71a.75.75 0 11-1.06 1.06l-4.25-4.25a.75.75 0 010-1.06l4.25-4.25a.75.75 0 011.06 0z" clip-rule="evenodd"/></svg>
+        </button>
+        <button id="btn-next-week" onclick="shiftWeek(1)" aria-label="Seuraava viikko" class="w-7 h-7 flex items-center justify-center rounded-md bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 transition disabled:opacity-30 disabled:pointer-events-none">
+          <svg viewBox="0 0 20 20" fill="currentColor" class="w-4 h-4"><path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 010-1.06L10.94 10 7.21 6.29a.75.75 0 111.06-1.06l4.25 4.25a.75.75 0 010 1.06l-4.25 4.25a.75.75 0 01-1.06 0z" clip-rule="evenodd"/></svg>
+        </button>
+      </div>
       <div class="flex text-xs font-medium rounded-md bg-zinc-200 dark:bg-zinc-800 p-0.5">
         <button id="btn-today" onclick="setViewMode('today')" class="px-3 py-1 rounded transition">Tänään</button>
         <button id="btn-week" onclick="setViewMode('week')" class="px-3 py-1 rounded transition">Viikko</button>
       </div>
-      <button onclick="fetchMenus()" class="text-xs font-medium px-3 py-1.5 rounded-md bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 transition">
+      <button onclick="fetchMenus()" class="hidden sm:inline-flex text-xs font-medium px-3 py-1.5 rounded-md bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 transition">
         Päivitä
       </button>
     </div>
   </header>
+
+  <div id="pull-indicator" class="fixed left-1/2 -translate-x-1/2 top-2 z-50 flex items-center justify-center w-9 h-9 rounded-full bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-sm opacity-0 pointer-events-none" style="transition: opacity 0.15s;">
+    <svg id="pull-indicator-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 text-zinc-500 dark:text-zinc-400">
+      <path d="M12 5v14M19 12l-7 7-7-7"/>
+    </svg>
+  </div>
 
   <main id="container" class="w-full max-w-4xl space-y-4">
     <div class="animate-pulse bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-6 h-48"></div>
@@ -66,16 +80,23 @@
   <script>
     let latestData = null;
     let viewMode = 'today';
+    let weekOffset = 0;
     try {
       viewMode = localStorage.getItem('lunch-view-mode') || 'today';
     } catch {}
 
     function setViewMode(mode) {
       viewMode = mode;
+      weekOffset = 0;
       try {
         localStorage.setItem('lunch-view-mode', mode);
       } catch {}
       updateToggleUI();
+      if (latestData) render(latestData);
+    }
+
+    function shiftWeek(delta) {
+      weekOffset = Math.max(0, weekOffset + delta);
       if (latestData) render(latestData);
     }
 
@@ -84,6 +105,8 @@
       const inactiveClass = 'text-zinc-500 dark:text-zinc-400';
       document.getElementById('btn-today').className = `px-3 py-1 rounded transition ${viewMode === 'today' ? activeClass : inactiveClass}`;
       document.getElementById('btn-week').className = `px-3 py-1 rounded transition ${viewMode === 'week' ? activeClass : inactiveClass}`;
+      document.getElementById('week-nav').classList.toggle('hidden', viewMode !== 'week');
+      document.getElementById('week-nav').classList.toggle('flex', viewMode === 'week');
     }
 
     async function fetchMenus() {
@@ -92,6 +115,7 @@
         const res = await fetch('/api/menu');
         const data = await res.json();
         latestData = data;
+        weekOffset = 0;
         render(data);
       } catch (err) {
         container.innerHTML = `<p class="text-rose-500">Tietojen haku epäonnistui: ${escapeHtml(err.message)}</p>`;
@@ -104,11 +128,11 @@
       return div.innerHTML;
     }
 
-    function isoWeekDates(anchorIso) {
+    function isoWeekDates(anchorIso, offsetWeeks) {
       const anchor = new Date(anchorIso + 'T00:00:00Z');
       const dow = (anchor.getUTCDay() + 6) % 7;
       const monday = new Date(anchor);
-      monday.setUTCDate(anchor.getUTCDate() - dow);
+      monday.setUTCDate(anchor.getUTCDate() - dow + (offsetWeeks || 0) * 7);
       const dates = [];
       for (let i = 0; i < 7; i++) {
         const d = new Date(monday);
@@ -116,6 +140,16 @@
         dates.push(d.toISOString().slice(0, 10));
       }
       return dates;
+    }
+
+    function maxAvailableDate(restaurants) {
+      let max = null;
+      for (const r of restaurants) {
+        for (const d of r.days) {
+          if (!max || d.date > max) max = d.date;
+        }
+      }
+      return max;
     }
 
     function weekdayLabel(iso) {
@@ -129,9 +163,10 @@
 
     function render(data) {
       updateToggleUI();
+      const weekDates = isoWeekDates(data.date, weekOffset);
       const dates = viewMode === 'today'
         ? [data.date]
-        : isoWeekDates(data.date).filter(d => d >= data.date);
+        : (weekOffset === 0 ? weekDates.filter(d => d >= data.date) : weekDates);
 
       document.getElementById('date-label').textContent = viewMode === 'today'
         ? `${weekdayLabel(data.date)} ${shortDateLabel(data.date)}`
@@ -140,6 +175,11 @@
       document.getElementById('container').innerHTML = dates
         .map(date => renderDaySection(date, data.restaurants, date === data.date))
         .join('');
+
+      const maxDate = maxAvailableDate(data.restaurants);
+      const nextWeekStart = isoWeekDates(data.date, weekOffset + 1)[0];
+      document.getElementById('btn-prev-week').disabled = weekOffset === 0;
+      document.getElementById('btn-next-week').disabled = !maxDate || nextWeekStart > maxDate;
     }
 
     function renderDaySection(date, restaurants, isToday) {
@@ -192,6 +232,60 @@
 
     updateToggleUI();
     fetchMenus();
+
+    (function setupPullToRefresh() {
+      const indicator = document.getElementById('pull-indicator');
+      const icon = document.getElementById('pull-indicator-icon');
+      const threshold = 70;
+      const maxPull = 100;
+      let startY = null;
+      let pulling = false;
+      let refreshing = false;
+
+      window.addEventListener('touchstart', (e) => {
+        if (window.scrollY <= 0 && !refreshing) {
+          startY = e.touches[0].clientY;
+          pulling = true;
+        }
+      }, { passive: true });
+
+      window.addEventListener('touchmove', (e) => {
+        if (!pulling || startY === null) return;
+        const delta = e.touches[0].clientY - startY;
+        if (delta <= 0) {
+          indicator.style.opacity = '0';
+          indicator.style.transform = 'translate(-50%, 0px)';
+          return;
+        }
+        const pull = Math.min(delta * 0.5, maxPull);
+        indicator.style.opacity = Math.min(pull / threshold, 1).toString();
+        indicator.style.transform = `translate(-50%, ${pull}px)`;
+        icon.style.transform = `rotate(${pull >= threshold ? 180 : 0}deg)`;
+      }, { passive: true });
+
+      window.addEventListener('touchend', () => {
+        if (!pulling || startY === null) return;
+        const pulledEnough = indicator.style.opacity !== '' && parseFloat(indicator.style.opacity) >= 1;
+        pulling = false;
+        startY = null;
+        if (pulledEnough) {
+          refreshing = true;
+          indicator.style.transform = 'translate(-50%, 60px)';
+          icon.classList.add('animate-spin');
+          fetchMenus().finally(() => {
+            icon.classList.remove('animate-spin');
+            icon.style.transform = 'rotate(0deg)';
+            indicator.style.opacity = '0';
+            indicator.style.transform = 'translate(-50%, 0px)';
+            refreshing = false;
+          });
+        } else {
+          indicator.style.opacity = '0';
+          indicator.style.transform = 'translate(-50%, 0px)';
+          icon.style.transform = 'rotate(0deg)';
+        }
+      });
+    })();
 
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
